@@ -1,18 +1,85 @@
 (function() {
+  // Global settings
+  let longAnswerMode = false; // false: multiple-choice; true: long answer mode
+  let toggleUIKey = "ControlRight"; // default key for toggling UI
+  let deleteUIKey = "Delete"; // default key for permanently deleting the UI
+  let uiVisible = true; // UI visibility state
+  let currentTheme = 'light'; // default theme
+
+  // Global references for elements that change with theme
+  let uiContainer, toggleThemeBtn, possibleAnswersDiv, finalAnswerDiv, closeButton;
+  let settingsPanel, modeTabButton, keybindsTabButton, longAnswerLabelRef;
+  let questionContainers = []; // will hold all question containers
+
+  async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Function to log status messages
+  function logStatus(message) {
+    const logDiv = document.getElementById('statusLog');
+    if (logDiv) {
+      const p = document.createElement('p');
+      p.style.margin = '2px 0';
+      p.textContent = message;
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+    console.log(message);
+  }
+
+  // Function for long answer mode: ask ChatGPT a custom question.
+  async function askLongAnswer(question) {
+    const apiKey = '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';
+    const endpoint = 'https://api.openai.com/v1/chat/completions';
+    const requestBody = {
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: question }],
+      temperature: 0.0,
+      max_tokens: 150
+    };
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + apiKey
+        },
+        body: JSON.stringify(requestBody)
+      });
+      if (!response.ok) {
+        logStatus(`ChatGPT API error: Received status ${response.status}`);
+        finalAnswerDiv.innerText = 'Error in API request';
+        return;
+      }
+      const data = await response.json();
+      if (data.choices && data.choices.length > 0) {
+        let answer = data.choices[0].message.content.trim();
+        finalAnswerDiv.innerText = answer;
+        logStatus(`Long Answer: ${answer}`);
+      } else {
+        logStatus('ChatGPT API did not return any choices.');
+        finalAnswerDiv.innerText = 'No answer from API';
+      }
+    } catch (err) {
+      logStatus(`Error calling ChatGPT API: ${err.message}`);
+      finalAnswerDiv.innerText = 'API error';
+    }
+  }
+
   function init() {
-    // Generate a random policy name to allow multiple executions.
+    // Generate a Trusted Types policy.
     const randomPolicyName = 'default-' + Math.random().toString(36).substring(2);
-    const policy = window.trustedTypes
-      ? window.trustedTypes.createPolicy(randomPolicyName, { createHTML: (str) => str })
+    const policy = window.trustedTypes 
+      ? window.trustedTypes.createPolicy(randomPolicyName, { createHTML: (str) => str }) 
       : null;
 
-    // Helper function to safely set innerHTML using TrustedHTML if available.
     function safeSetHTML(element, html) {
       element.innerHTML = policy ? policy.createHTML(html) : html;
     }
 
-    // Create the UI container.
-    const uiContainer = document.createElement('div');
+    // Create the main UI container.
+    uiContainer = document.createElement('div');
     uiContainer.id = 'qaHelperUI';
     uiContainer.style.position = 'fixed';
     uiContainer.style.top = '10px';
@@ -22,16 +89,33 @@
     uiContainer.style.zIndex = '9999';
     uiContainer.style.fontFamily = 'Arial, sans-serif';
     uiContainer.style.fontSize = '14px';
-    uiContainer.style.width = '360px';
-
-    // Initial light theme styles.
+    uiContainer.style.width = '380px';
+    uiContainer.style.boxShadow = "0 2px 6px rgba(0,0,0,0.3)";
+    // Initial light theme:
     uiContainer.style.backgroundColor = '#f0f0f0';
     uiContainer.style.border = '1px solid #ccc';
     uiContainer.style.color = '#333';
+    document.body.appendChild(uiContainer);
+
+    // Create a stylish settings button.
+    const settingsButton = document.createElement('button');
+    settingsButton.innerText = "⚙ Settings";
+    settingsButton.id = "settingsButton";
+    settingsButton.style.position = "absolute";
+    settingsButton.style.top = "5px";
+    settingsButton.style.right = "40px";
+    settingsButton.style.backgroundColor = "#007BFF";
+    settingsButton.style.border = "none";
+    settingsButton.style.borderRadius = "3px";
+    settingsButton.style.color = "#fff";
+    settingsButton.style.padding = "3px 8px";
+    settingsButton.style.cursor = "pointer";
+    settingsButton.style.fontSize = "12px";
+    uiContainer.appendChild(settingsButton);
 
     // Create the close (X) button.
-    const closeButton = document.createElement('button');
-    closeButton.innerText = 'X';
+    closeButton = document.createElement('button');
+    closeButton.innerText = "✖";
     closeButton.id = 'closeButton';
     closeButton.style.position = 'absolute';
     closeButton.style.top = '5px';
@@ -40,142 +124,268 @@
     closeButton.style.border = 'none';
     closeButton.style.fontSize = '16px';
     closeButton.style.cursor = 'pointer';
-    // Initial style for light mode:
     closeButton.style.color = '#333';
     closeButton.addEventListener('click', function() {
       uiContainer.remove();
     });
     uiContainer.appendChild(closeButton);
 
-    // Create a separate container for the inner HTML so our close button isn't overwritten.
-    const contentContainer = document.createElement('div');
+    // Create the settings panel.
+    settingsPanel = document.createElement('div');
+    settingsPanel.id = "settingsPanel";
+    settingsPanel.style.display = "none";
+    settingsPanel.style.marginTop = "10px";
+    settingsPanel.style.padding = "10px";
+    settingsPanel.style.border = "1px solid #aaa";
+    settingsPanel.style.backgroundColor = "#fff";
+    settingsPanel.style.borderRadius = "5px";
+    settingsPanel.style.boxShadow = "0 1px 4px rgba(0,0,0,0.2)";
+    settingsPanel.style.fontSize = "13px";
+    uiContainer.appendChild(settingsPanel);
+
+    // Create tabs header for settings.
+    const tabsContainer = document.createElement('div');
+    tabsContainer.style.display = "flex";
+    tabsContainer.style.justifyContent = "space-between";
+    tabsContainer.style.marginBottom = "10px";
+
+    modeTabButton = document.createElement('button');
+    modeTabButton.innerText = "Mode";
+    modeTabButton.style.flex = "1";
+    modeTabButton.style.padding = "5px";
+    modeTabButton.style.cursor = "pointer";
+    modeTabButton.style.backgroundColor = "#007BFF";
+    modeTabButton.style.color = "#fff";
+    modeTabButton.style.border = "none";
+    modeTabButton.style.borderRadius = "3px 0 0 3px";
+
+    keybindsTabButton = document.createElement('button');
+    keybindsTabButton.innerText = "Keybinds";
+    keybindsTabButton.style.flex = "1";
+    keybindsTabButton.style.padding = "5px";
+    keybindsTabButton.style.cursor = "pointer";
+    keybindsTabButton.style.backgroundColor = "#f0f0f0";
+    keybindsTabButton.style.color = "#333";
+    keybindsTabButton.style.border = "1px solid #ccc";
+    keybindsTabButton.style.borderLeft = "none";
+    keybindsTabButton.style.borderRadius = "0 3px 3px 0";
+
+    tabsContainer.appendChild(modeTabButton);
+    tabsContainer.appendChild(keybindsTabButton);
+    settingsPanel.appendChild(tabsContainer);
+
+    // Create content for Mode tab.
+    const modeTabContent = document.createElement('div');
+    modeTabContent.id = "modeTabContent";
+    modeTabContent.style.display = "block";
+    modeTabContent.style.padding = "5px";
+
+    // Mode tab: Long Answer Mode option.
+    longAnswerLabelRef = document.createElement('label');
+    longAnswerLabelRef.innerText = "Long Answer Mode:";
+    longAnswerLabelRef.style.marginRight = "10px";
+    longAnswerLabelRef.style.fontWeight = "bold";
+    const longAnswerCheckbox = document.createElement('input');
+    longAnswerCheckbox.type = "checkbox";
+    longAnswerCheckbox.checked = longAnswerMode;
+    longAnswerCheckbox.style.cursor = "pointer";
+    longAnswerCheckbox.addEventListener('change', function() {
+      longAnswerMode = longAnswerCheckbox.checked;
+      logStatus("Long Answer Mode " + (longAnswerMode ? "enabled" : "disabled"));
+      if (longAnswerMode) {
+        const userQuestion = prompt("Enter your question for ChatGPT:");
+        if (userQuestion) {
+          askLongAnswer(userQuestion);
+        }
+      }
+    });
+    modeTabContent.appendChild(longAnswerLabelRef);
+    modeTabContent.appendChild(longAnswerCheckbox);
+
+    // Create content for Keybinds tab.
+    const keybindsTabContent = document.createElement('div');
+    keybindsTabContent.id = "keybindsTabContent";
+    keybindsTabContent.style.display = "none";
+    keybindsTabContent.style.padding = "5px";
+
+    const toggleKeyContainer = document.createElement('div');
+    toggleKeyContainer.style.marginBottom = "8px";
+    const toggleKeyLabel = document.createElement('span');
+    toggleKeyLabel.innerText = "Toggle UI Key: ";
+    toggleKeyLabel.style.fontWeight = "bold";
+    const toggleKeyButton = document.createElement('button');
+    toggleKeyButton.innerText = toggleUIKey;
+    toggleKeyButton.style.padding = "3px 8px";
+    toggleKeyButton.style.cursor = "pointer";
+    toggleKeyButton.style.backgroundColor = "#28A745";
+    toggleKeyButton.style.color = "#fff";
+    toggleKeyButton.style.border = "none";
+    toggleKeyButton.style.borderRadius = "3px";
+    toggleKeyButton.addEventListener('click', function() {
+      toggleKeyButton.innerText = "Press a key...";
+      const captureKey = function(event) {
+        toggleUIKey = event.code;
+        toggleKeyButton.innerText = toggleUIKey;
+        document.removeEventListener('keydown', captureKey, true);
+        logStatus("Toggle UI Key set to: " + toggleUIKey);
+      };
+      document.addEventListener('keydown', captureKey, true);
+    });
+    toggleKeyContainer.appendChild(toggleKeyLabel);
+    toggleKeyContainer.appendChild(toggleKeyButton);
+
+    const deleteKeyContainer = document.createElement('div');
+    deleteKeyContainer.style.marginBottom = "8px";
+    const deleteKeyLabel = document.createElement('span');
+    deleteKeyLabel.innerText = "Delete UI Key: ";
+    deleteKeyLabel.style.fontWeight = "bold";
+    const deleteKeyButton = document.createElement('button');
+    deleteKeyButton.innerText = deleteUIKey;
+    deleteKeyButton.style.padding = "3px 8px";
+    deleteKeyButton.style.cursor = "pointer";
+    deleteKeyButton.style.backgroundColor = "#DC3545";
+    deleteKeyButton.style.color = "#fff";
+    deleteKeyButton.style.border = "none";
+    deleteKeyButton.style.borderRadius = "3px";
+    deleteKeyButton.addEventListener('click', function() {
+      deleteKeyButton.innerText = "Press a key...";
+      const captureKey = function(event) {
+        deleteUIKey = event.code;
+        deleteKeyButton.innerText = deleteUIKey;
+        document.removeEventListener('keydown', captureKey, true);
+        logStatus("Delete UI Key set to: " + deleteUIKey);
+      };
+      document.addEventListener('keydown', captureKey, true);
+    });
+    deleteKeyContainer.appendChild(deleteKeyLabel);
+    deleteKeyContainer.appendChild(deleteKeyButton);
+
+    keybindsTabContent.appendChild(toggleKeyContainer);
+    keybindsTabContent.appendChild(deleteKeyContainer);
+
+    // Append tab contents.
+    settingsPanel.appendChild(modeTabContent);
+    settingsPanel.appendChild(keybindsTabContent);
+
+    // Toggle between tabs.
+    modeTabButton.addEventListener('click', function() {
+      modeTabContent.style.display = "block";
+      keybindsTabContent.style.display = "none";
+      modeTabButton.style.backgroundColor = "#007BFF";
+      modeTabButton.style.color = "#fff";
+      keybindsTabButton.style.backgroundColor = "#f0f0f0";
+      keybindsTabButton.style.color = "#333";
+    });
+    keybindsTabButton.addEventListener('click', function() {
+      modeTabContent.style.display = "none";
+      keybindsTabContent.style.display = "block";
+      keybindsTabButton.style.backgroundColor = "#007BFF";
+      keybindsTabButton.style.color = "#fff";
+      modeTabButton.style.backgroundColor = "#f0f0f0";
+      modeTabButton.style.color = "#333";
+    });
+
+    // Append settings panel.
+    uiContainer.appendChild(settingsPanel);
+
+    // Toggle settings panel when settings button is clicked.
+    settingsButton.addEventListener('click', function() {
+      settingsPanel.style.display = (settingsPanel.style.display === "none") ? "block" : "none";
+    });
+
+    // Create the main content container.
+    const mainContent = document.createElement('div');
     const innerHTMLContent = `
-      <div style="margin-bottom: 8px; text-align: center;">
-        <button id="toggleThemeBtn" style="padding: 5px 10px; border: none; background-color: #666; color: #fff; cursor: pointer; border-radius: 3px;">
+      <div style="margin-bottom: 10px; text-align: center;">
+        <button id="toggleThemeBtn" style="padding: 5px 10px; border: none; background-color: #666; color: #fff; cursor: pointer; border-radius: 3px; margin-bottom: 5px;">
           Toggle Dark Mode
         </button>
       </div>
-      <div style="margin-bottom: 8px; font-weight: bold; font-size: 16px; text-align: center;">
-        AutoForm Filler
+      <div style="margin-bottom: 10px; text-align: center;">
+        <span style="font-weight: bold; font-size: 18px;">AutoForm Filler</span>
+        <span id="apiStatusIndicator" style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color: gray; margin-left:10px;" title="ChatGPT API Status"></span>
       </div>
-      <div style="margin-bottom: 8px; text-align: center;">
-        <input id="questionNumber" type="number" placeholder="Question #" style="width: 60px; margin-right: 10px;">
-        <button id="showOptionsBtn" style="padding: 5px 10px; border: none; background-color: #2196F3; color: #fff; cursor: pointer; border-radius: 3px; margin-right: 5px;">
+      <div style="margin-bottom: 10px; text-align: center;">
+        <input id="questionNumber" type="number" placeholder="Question #" style="width: 70px; margin-right: 10px; padding: 3px;">
+        <button id="showOptionsBtn" style="padding: 5px 8px; border: none; background-color: #2196F3; color: #fff; cursor: pointer; border-radius: 3px; margin-right: 5px;">
           Show Options
         </button>
-        <button id="determineAnswerBtn" style="padding: 5px 10px; border: none; background-color: #4CAF50; color: #fff; cursor: pointer; border-radius: 3px;">
+        <button id="determineAnswerBtn" style="padding: 5px 8px; border: none; background-color: #4CAF50; color: #fff; cursor: pointer; border-radius: 3px; margin-right: 5px;">
           Determine Final Answer
         </button>
+        <button id="autoClickBtn" style="padding: 5px 8px; border: none; background-color: #FF9800; color: #fff; cursor: pointer; border-radius: 3px; margin-right: 5px;">
+          Auto Click Answer
+        </button>
+        <button id="autoAnswerAllBtn" style="padding: 5px 8px; border: none; background-color: #9C27B0; color: #fff; cursor: pointer; border-radius: 3px;">
+          Auto Answer All
+        </button>
       </div>
-      <div style="margin-bottom: 8px;">
+      <div style="margin-bottom: 10px;">
         <strong>Possible Answers:</strong>
-        <div id="possibleAnswers" style="background-color: #fff; padding: 5px; border: 1px solid #ccc; border-radius: 3px; margin-top: 5px; max-height: 100px; overflow-y: auto; color: #333;">
-          None yet
-        </div>
+        <div id="possibleAnswers" style="background-color: #fff; padding: 5px; border: 1px solid #ccc; border-radius: 3px; margin-top: 5px; max-height: 120px; overflow-y: auto; color: #333;"></div>
       </div>
-      <div style="margin-bottom: 8px;">
+      <div style="margin-bottom: 10px;">
         <strong>Final Answer:</strong>
-        <div id="finalAnswer" style="background-color: #fff; padding: 5px; border: 1px solid #ccc; border-radius: 3px; margin-top: 5px; text-align: center; color: #333;">
-          None yet
-        </div>
+        <div id="finalAnswer" style="background-color: #fff; padding: 5px; border: 1px solid #ccc; border-radius: 3px; margin-top: 5px; text-align: center; color: #333;"></div>
       </div>
       <div style="background-color: #222; padding: 5px; border-radius: 3px; color: #fff;">
         <div style="font-weight: bold; text-align: center; margin-bottom: 5px;">Logs</div>
-        <!-- Now the log container has its own scrolling -->
         <div id="statusLog" style="font-size: 12px; line-height: 1.4em; max-height: 150px; overflow-y: auto;"></div>
       </div>
     `;
-    safeSetHTML(contentContainer, innerHTMLContent);
-    uiContainer.appendChild(contentContainer);
-
+    safeSetHTML(mainContent, innerHTMLContent);
+    uiContainer.appendChild(mainContent);
     document.body.appendChild(uiContainer);
 
-    // Current theme state ("light" or "dark").
-    let currentTheme = 'light';
+    // Cache main content elements.
+    toggleThemeBtn = document.getElementById('toggleThemeBtn');
+    possibleAnswersDiv = document.getElementById('possibleAnswers');
+    finalAnswerDiv = document.getElementById('finalAnswer');
 
-    // Function to update UI styles based on the theme.
+    // Define the setTheme function to update styles for dark and light modes.
     function setTheme(theme) {
-      const toggleThemeBtn = document.getElementById('toggleThemeBtn');
-      const showOptionsBtn = document.getElementById('showOptionsBtn');
-      const determineAnswerBtn = document.getElementById('determineAnswerBtn');
-      const possibleAnswersDiv = document.getElementById('possibleAnswers');
-      const finalAnswerDiv = document.getElementById('finalAnswer');
-
       if (theme === 'dark') {
-        uiContainer.style.backgroundColor = '#222';
-        uiContainer.style.border = '1px solid #444';
-        uiContainer.style.color = '#eee';
-
-        showOptionsBtn.style.backgroundColor = '#555';
-        showOptionsBtn.style.color = '#fff';
-        determineAnswerBtn.style.backgroundColor = '#5cb85c';
-        determineAnswerBtn.style.color = '#fff';
-        toggleThemeBtn.style.backgroundColor = '#555';
-        toggleThemeBtn.style.color = '#fff';
-
-        possibleAnswersDiv.style.backgroundColor = '#333';
-        possibleAnswersDiv.style.border = '1px solid #555';
-        possibleAnswersDiv.style.color = '#eee';
-        finalAnswerDiv.style.backgroundColor = '#333';
-        finalAnswerDiv.style.border = '1px solid #555';
-        finalAnswerDiv.style.color = '#eee';
-
-        toggleThemeBtn.innerText = "Toggle Light Mode";
-        // Update close button for dark mode.
-        closeButton.style.color = '#eee';
+        uiContainer.style.backgroundColor = '#333';
+        uiContainer.style.borderColor = '#555';
+        uiContainer.style.color = '#fff';
+        if (toggleThemeBtn) {
+          toggleThemeBtn.style.backgroundColor = '#888';
+        }
+        possibleAnswersDiv.style.backgroundColor = '#444';
+        possibleAnswersDiv.style.color = '#fff';
+        finalAnswerDiv.style.backgroundColor = '#444';
+        finalAnswerDiv.style.color = '#fff';
+        if (settingsPanel) {
+          settingsPanel.style.backgroundColor = '#555';
+          settingsPanel.style.color = '#fff';
+        }
       } else {
         uiContainer.style.backgroundColor = '#f0f0f0';
-        uiContainer.style.border = '1px solid #ccc';
+        uiContainer.style.borderColor = '#ccc';
         uiContainer.style.color = '#333';
-
-        showOptionsBtn.style.backgroundColor = '#2196F3';
-        showOptionsBtn.style.color = '#fff';
-        determineAnswerBtn.style.backgroundColor = '#4CAF50';
-        determineAnswerBtn.style.color = '#fff';
-        toggleThemeBtn.style.backgroundColor = '#666';
-        toggleThemeBtn.style.color = '#fff';
-
+        if (toggleThemeBtn) {
+          toggleThemeBtn.style.backgroundColor = '#666';
+        }
         possibleAnswersDiv.style.backgroundColor = '#fff';
-        possibleAnswersDiv.style.border = '1px solid #ccc';
         possibleAnswersDiv.style.color = '#333';
         finalAnswerDiv.style.backgroundColor = '#fff';
-        finalAnswerDiv.style.border = '1px solid #ccc';
         finalAnswerDiv.style.color = '#333';
-
-        toggleThemeBtn.innerText = "Toggle Dark Mode";
-        // Update close button for light mode.
-        closeButton.style.color = '#333';
+        if (settingsPanel) {
+          settingsPanel.style.backgroundColor = '#fff';
+          settingsPanel.style.color = '#333';
+        }
       }
     }
 
-    // Toggle theme event listener.
-    document.getElementById('toggleThemeBtn').addEventListener('click', function() {
+    // Dark mode toggle.
+    toggleThemeBtn.addEventListener('click', function() {
       currentTheme = currentTheme === 'light' ? 'dark' : 'light';
       setTheme(currentTheme);
     });
 
-    // === Logging Helper ===
-    function logStatus(message) {
-      const logDiv = document.getElementById('statusLog');
-      if (logDiv) {
-        const p = document.createElement('p');
-        p.style.margin = '2px 0';
-        p.textContent = message;
-        logDiv.appendChild(p);
-        // Auto-scroll: set scrollTop to scrollHeight so that the new message is visible.
-        logDiv.scrollTop = logDiv.scrollHeight;
-      }
-      console.log(message);
-    }
-
-    // === Sleep Helper ===
-    function sleep(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    // === Global Variables for Current Question Data ===
+    // === Global Variables for Question Data ===
     let currentQuestionText = '';
-    let currentOptions = []; // Array of objects: { text, element, score, letter }
+    let currentOptions = []; // Array: { text, element, letter }
 
     // === Gather All Question Containers ===
     const containerSelectors = [
@@ -183,7 +393,7 @@
       'div.freebirdFormviewerComponentsQuestionItem',
       'div[role="listitem"]'
     ];
-    let questionContainers = [];
+    questionContainers = [];
     containerSelectors.forEach(selector => {
       const found = Array.from(document.querySelectorAll(selector));
       if (found.length > 0) {
@@ -191,19 +401,35 @@
       }
       questionContainers = questionContainers.concat(found);
     });
-    // Remove duplicates.
     questionContainers = Array.from(new Set(questionContainers));
     logStatus(`Total unique question containers: ${questionContainers.length}`);
 
-    // === Function: Show Options (Step 1) ===
+    // === Add Number Badges to Each Question Container ===
+    questionContainers.forEach((container, index) => {
+      if (getComputedStyle(container).position === 'static') {
+        container.style.position = 'relative';
+      }
+      const badge = document.createElement('div');
+      badge.className = 'questionBadge';
+      badge.textContent = index + 1;
+      badge.style.position = 'absolute';
+      badge.style.top = '2px';
+      badge.style.left = '2px';
+      badge.style.backgroundColor = 'red';
+      badge.style.color = 'white';
+      badge.style.padding = '2px 5px';
+      badge.style.fontSize = '10px';
+      badge.style.borderRadius = '50%';
+      badge.style.zIndex = '10000';
+      container.appendChild(badge);
+    });
+
+    // === Function: Show Options for a Given Question Container ===
     function showOptions(container) {
-      // Clear previous displays.
       safeSetHTML(document.getElementById('possibleAnswers'), '');
-      document.getElementById('finalAnswer').innerText = '';
+      finalAnswerDiv.innerText = '';
       currentQuestionText = '';
       currentOptions = [];
-
-      // Extract question text.
       const titleSelectors = [
         '.freebirdFormviewerComponentsQuestionBaseTitle',
         '.freebirdFormviewerComponentsQuestionItemTitle',
@@ -225,16 +451,11 @@
         return;
       }
       logStatus(`Question: "${currentQuestionText}"`);
-
-      // Attempt primary method: Use common selectors for options.
       let optionsElements = [];
       optionsElements = optionsElements.concat(Array.from(container.querySelectorAll('div.freebirdFormviewerComponentsQuestionOptionItem')));
       optionsElements = optionsElements.concat(Array.from(container.querySelectorAll('.exportLabel')));
       optionsElements = optionsElements.concat(Array.from(container.querySelectorAll('div[role="radio"], div[role="checkbox"]')));
-      // New selector: grab answer labels (common in Google Forms).
       optionsElements = optionsElements.concat(Array.from(container.querySelectorAll('label.docssharedWizToggleLabeledContainer')));
-
-      // If still no options, try radio/checkbox inputs.
       if (optionsElements.length === 0) {
         const optionInputs = container.querySelectorAll('input[type="radio"], input[type="checkbox"]');
         optionInputs.forEach(input => {
@@ -247,24 +468,19 @@
       } else {
         logStatus(`Primary: Found ${optionsElements.length} candidate option element(s).`);
       }
-
-      // Extract unique option texts.
       const seenTexts = new Set();
       optionsElements.forEach(el => {
         let text = el.innerText.trim();
         if (text && text.replace(/[\W_]/g, '').length > 0 && !seenTexts.has(text)) {
           seenTexts.add(text);
-          currentOptions.push({ text: text, element: el, score: 0 });
+          currentOptions.push({ text: text, element: el });
         }
       });
-
       if (currentOptions.length === 0) {
         logStatus('No multiple-choice options found.');
         logStatus('Question container HTML: ' + container.innerHTML);
         return;
       }
-
-      // Map options to letters.
       const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
       let possibleHTML = '<ul style="list-style: none; padding: 0; margin: 0;">';
       currentOptions.forEach((opt, idx) => {
@@ -277,72 +493,147 @@
       logStatus('Displayed candidate options with letter mappings.');
     }
 
-    // === Function: Determine Final Answer (Step 2) ===
+    // === Function: Determine Final Answer for the Current Question ===
     async function determineFinalAnswer() {
       if (!currentQuestionText || currentOptions.length === 0) {
         logStatus('No current question or options. Please use "Show Options" first.');
         return;
       }
-
-      // For each candidate option, perform a query and analyze snippet texts.
-      for (const candidate of currentOptions) {
-        const combinedQuery = `${currentQuestionText} ${candidate.text}`;
-        const sanitizedCombinedQuery = combinedQuery.replace(/[\r\n]+/g, ' ').replace(/\*+/g, '').trim();
-        const encodedQuery = encodeURIComponent(sanitizedCombinedQuery);
-        const apiKey = 'AIzaSyC4HWhlAgRiEN1zg6zbTDuVNpsrvgh-8_A';
-        const cx = '176033061b13f4141';
-        const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodedQuery}&num=3`;
-        logStatus(`Querying for option "${candidate.text}" using query: ${sanitizedCombinedQuery}`);
-        try {
-          const response = await fetch(searchUrl);
-          if (!response.ok) {
-            logStatus(`Error for option "${candidate.text}": Received status ${response.status}`);
-            candidate.score = 0;
-            continue;
-          }
-          const data = await response.json();
-          let snippetScore = 0;
-          if (data.items && data.items.length > 0) {
-            data.items.forEach(item => {
-              const snippet = item.snippet || "";
-              const regex = new RegExp(candidate.text, "gi");
-              const matches = snippet.match(regex);
-              if (matches) {
-                snippetScore += matches.length;
-              }
-            });
-          }
-          candidate.score = snippetScore;
-          logStatus(`Option "${candidate.text}" got a snippet score of ${snippetScore}.`);
-        } catch (err) {
-          logStatus(`Error for option "${candidate.text}": ${err.message}`);
-          candidate.score = 0;
+      const prompt = `Question: ${currentQuestionText}\n\nOptions:\n` +
+                     currentOptions.map(opt => `${opt.letter}: ${opt.text}`).join("\n") +
+                     `\n\nPlease respond with only the letter of the correct answer.`;
+      logStatus('Sending request to ChatGPT API with prompt: ' + prompt);
+      const apiKey = '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';
+      const endpoint = 'https://api.openai.com/v1/chat/completions';
+      const requestBody = {
+        model: "gpt-3.5-turbo",
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.0,
+        max_tokens: 10
+      };
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + apiKey
+          },
+          body: JSON.stringify(requestBody)
+        });
+        if (!response.ok) {
+          logStatus(`ChatGPT API error: Received status ${response.status}`);
+          finalAnswerDiv.innerText = 'Error in API request';
+          return;
         }
-        await sleep(1000);
-      }
-
-      // Display updated candidate options with snippet scores.
-      const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      let possibleHTML = '<ul style="list-style: none; padding: 0; margin: 0;">';
-      currentOptions.forEach(opt => {
-        possibleHTML += `<li style="margin-bottom: 4px;">${opt.letter}: ${opt.text} (score: ${opt.score})</li>`;
-      });
-      possibleHTML += '</ul>';
-      safeSetHTML(document.getElementById('possibleAnswers'), possibleHTML);
-      logStatus('Updated candidate options with snippet scores.');
-
-      // Determine the best candidate based on the highest score.
-      let bestCandidate = currentOptions.reduce((prev, curr) => (curr.score > prev.score ? curr : prev), { score: 0 });
-      if (bestCandidate && bestCandidate.score > 0 && bestCandidate.text) {
-        document.getElementById('finalAnswer').innerText = bestCandidate.letter;
-        logStatus(`Final answer: ${bestCandidate.letter} (option "${bestCandidate.text}" with score ${bestCandidate.score}).`);
-      } else {
-        logStatus('No candidate returned a positive score.');
-        document.getElementById('finalAnswer').innerText = 'No valid answer found';
+        const data = await response.json();
+        if (data.choices && data.choices.length > 0) {
+          let answer = data.choices[0].message.content.trim();
+          if (!longAnswerMode) {
+            // In multiple-choice mode, extract the first character.
+            answer = answer[0].toUpperCase();
+            const validLetters = currentOptions.map(opt => opt.letter);
+            if (!validLetters.includes(answer)) {
+              logStatus(`ChatGPT API returned an invalid answer: ${data.choices[0].message.content}`);
+              finalAnswerDiv.innerText = 'Invalid answer from API';
+              return;
+            }
+          }
+          finalAnswerDiv.innerText = answer;
+          logStatus(`Final answer: ${answer}`);
+        } else {
+          logStatus('ChatGPT API did not return any choices.');
+          finalAnswerDiv.innerText = 'No answer from API';
+        }
+      } catch (err) {
+        logStatus(`Error calling ChatGPT API: ${err.message}`);
+        finalAnswerDiv.innerText = 'API error';
       }
     }
 
-    // === Button Event Listeners ===
+    // === Function to Auto Click the Answer for the Current Question ===
+    function autoClickAnswer() {
+      const finalAnswerText = finalAnswerDiv.innerText.trim();
+      if (!finalAnswerText) {
+        logStatus("No final answer available. Please determine the final answer first.");
+        return;
+      }
+      const candidate = currentOptions.find(opt => opt.letter.toUpperCase() === finalAnswerText[0].toUpperCase());
+      if (candidate && candidate.element) {
+        logStatus("Auto-clicking candidate: " + candidate.letter);
+        candidate.element.click();
+      } else {
+        logStatus("Could not find candidate for final answer: " + finalAnswerText);
+      }
+    }
+
+    // === Function to Auto Answer All Questions ===
+    async function autoAnswerAll() {
+      for (let i = 0; i < questionContainers.length; i++) {
+        const container = questionContainers[i];
+        logStatus(`Auto answering question ${i + 1} of ${questionContainers.length}`);
+        showOptions(container);
+        await sleep(300);
+        // If no multiple-choice options found, skip the question.
+        if (currentOptions.length === 0) {
+          logStatus(`Skipping question ${i + 1} (no multiple-choice options).`);
+          continue;
+        }
+        await determineFinalAnswer();
+        await sleep(300);
+        autoClickAnswer();
+        await sleep(300);
+      }
+      logStatus("Auto answer all complete.");
+    }
+
+    // === API Test Function for ChatGPT ===
+    async function testChatGPTAPI() {
+      const apiKey = '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';
+      const endpoint = 'https://api.openai.com/v1/chat/completions';
+      const requestBody = {
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: "API status check" }],
+        temperature: 0.0,
+        max_tokens: 5
+      };
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + apiKey
+          },
+          body: JSON.stringify(requestBody)
+        });
+        if (!response.ok) {
+          updateAPIStatusDot('red');
+          logStatus(`ChatGPT API test failed with status ${response.status}`);
+          return;
+        }
+        const data = await response.json();
+        if (data.choices && data.choices.length > 0) {
+          updateAPIStatusDot('green');
+          logStatus(`ChatGPT API test succeeded.`);
+        } else {
+          updateAPIStatusDot('red');
+          logStatus(`ChatGPT API test returned no choices.`);
+        }
+      } catch (err) {
+        updateAPIStatusDot('red');
+        logStatus(`ChatGPT API test error: ${err.message}`);
+      }
+    }
+
+    function updateAPIStatusDot(color) {
+      const dot = document.getElementById('apiStatusIndicator');
+      if (dot) {
+        dot.style.backgroundColor = color;
+      }
+    }
+
+    // === Button Event Listeners for Single Question Operations ===
     document.getElementById('showOptionsBtn').addEventListener('click', function() {
       const qNumInput = document.getElementById('questionNumber').value;
       const qIndex = parseInt(qNumInput, 10) - 1;
@@ -355,9 +646,41 @@
     });
 
     document.getElementById('determineAnswerBtn').addEventListener('click', async function() {
-      logStatus('Determining final answer based on candidate snippet analysis...');
+      logStatus('Determining final answer using ChatGPT API...');
       await determineFinalAnswer();
     });
+
+    document.getElementById('autoClickBtn').addEventListener('click', function() {
+      autoClickAnswer();
+    });
+
+    document.getElementById('autoAnswerAllBtn').addEventListener('click', async function() {
+      logStatus("Starting auto answer for all questions...");
+      await autoAnswerAll();
+    });
+
+    // Test the ChatGPT API on startup.
+    testChatGPTAPI();
+
+    // === Keydown Event Listener for UI Toggles and Deletion ===
+    // Using capturing phase (third parameter true) to increase the chance of intercepting key events
+    document.addEventListener('keydown', function(event) {
+      if (event.code === toggleUIKey && !event.repeat) {
+        uiVisible = !uiVisible;
+        uiContainer.style.display = uiVisible ? 'block' : 'none';
+        const badges = document.querySelectorAll('.questionBadge');
+        badges.forEach(badge => {
+          badge.style.display = uiVisible ? 'block' : 'none';
+        });
+        logStatus(`UI and question badges ${uiVisible ? 'shown' : 'hidden'}.`);
+      }
+      if (event.code === deleteUIKey && !event.repeat) {
+        uiContainer.remove();
+        const badges = document.querySelectorAll('.questionBadge');
+        badges.forEach(badge => badge.remove());
+        logStatus('UI and question badges permanently removed.');
+      }
+    }, true);
   }
 
   if (document.readyState === 'loading') {
@@ -366,4 +689,3 @@
     init();
   }
 })();
-
